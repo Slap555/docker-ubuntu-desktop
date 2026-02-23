@@ -50,7 +50,7 @@ RUN echo 'server {\n\
     }\n\
 }' > /etc/nginx/sites-available/default
 
-# 5. Script de arranque (CON REPARACIÓN DE CONFIG.JSON PARA PUFFERPANEL)
+# 5. Script de arranque
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
@@ -58,26 +58,30 @@ echo "[1/4] Iniciando VNC..."\n\
 rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock 2>/dev/null || true\n\
 vncserver -localhost no -SecurityTypes None -geometry 1280x720 --I-KNOW-THIS-IS-INSECURE\n\
 \n\
-echo "[2/4] Iniciando Websockify..."\n\
+echo "[2/4] Preparando logs y Websockify..."\n\
+# IMPORTANTE: Creamos los archivos manualmente primero para que tail no falle\n\
+mkdir -p /var/log/pufferpanel /var/log/nginx\n\
+touch /var/log/pufferpanel/server.log /var/log/websockify.log /var/log/nginx/error.log\n\
+chmod 777 /var/log/pufferpanel/server.log\n\
+\n\
 websockify --web=/usr/share/novnc/ 6080 localhost:5901 > /var/log/websockify.log 2>&1 &\n\
 \n\
 echo "[3/4] Inicializando configuración de PufferPanel..."\n\
-# IMPORTANTE: Forzamos la creacion de un config base o el comando de "run" se caera en loop infinito\n\
 if [ ! -f /etc/pufferpanel/config.json ]; then\n\
     echo "{\n  \"panel\": {\n    \"web\": {\n      \"host\": \"0.0.0.0:8080\"\n    }\n  }\n}" > /etc/pufferpanel/config.json\n\
 fi\n\
-chown -R root:root /etc/pufferpanel /var/lib/pufferpanel\n\
+chown -R root:root /etc/pufferpanel /var/lib/pufferpanel /var/log/pufferpanel\n\
 \n\
 echo "[4/4] Iniciando PufferPanel..."\n\
 PUFFER_BIN=$(which pufferpanel 2>/dev/null || echo "/usr/sbin/pufferpanel")\n\
-# Lo ejecutamos forzando a que lea el archivo de configuracion usando variables de entorno base por si acaso\n\
 PUFFER_PANEL_WEB_HOST=0.0.0.0:8080 $PUFFER_BIN run > /var/log/pufferpanel/server.log 2>&1 &\n\
 \n\
 echo "[5/5] Iniciando Nginx..."\n\
-# Mantiene el log de Puffer visible para diagnosticar otros fallos en Railway\n\
+# Ahora tail encontrara los archivos garantizado\n\
 tail -f /var/log/pufferpanel/server.log &\n\
 \n\
 nginx -g "daemon off;"\n' > /start.sh && chmod +x /start.sh
+
 
 # 6. Solo exponemos el puerto de Nginx 
 EXPOSE 80
