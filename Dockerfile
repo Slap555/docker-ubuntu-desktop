@@ -2,12 +2,12 @@ FROM --platform=linux/amd64 ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Instalar dependencias (quitamos systemd de la lista crítica, aunque se instale por deps)
+# 1. Instalar dependencias base + Nginx como proxy interno
 RUN apt update -y && apt install --no-install-recommends -y \
     xfce4 xfce4-goodies tigervnc-standalone-server novnc websockify \
-    sudo xterm snapd vim net-tools curl wget git tzdata openssl ca-certificates
+    sudo xterm snapd vim net-tools curl wget git tzdata openssl ca-certificates nginx
 
-# 2. Configurar entorno de escritorio y Firefox (parte original de Slap555)
+# 2. Configurar entorno de escritorio y Firefox
 RUN apt update -y && apt install -y dbus-x11 x11-utils x11-xserver-utils x11-apps
 RUN apt install software-properties-common -y
 RUN add-apt-repository ppa:mozillateam/ppa -y
@@ -18,37 +18,71 @@ RUN echo 'Unattended-Upgrade::Allowed-Origins:: "LP-PPA-mozillateam:jammy";' | t
 RUN apt update -y && apt install -y firefox xubuntu-icon-theme
 RUN touch /root/.Xauthority
 
-# 3. INSTALAR PUFFERPANEL (Sin usar apt/systemd)
-# Descargamos el binario directo. Es más limpio para Docker.
-RUN curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | sudo bash
-RUN sudo apt-get install pufferpanel
-
-# Crear carpetas necesarias
+# 3. Instalar PufferPanel via repositorio APT
+RUN curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | bash
+RUN apt-get install -y pufferpanel
 RUN mkdir -p /etc/pufferpanel /var/lib/pufferpanel /var/log/pufferpanel
 
-# 4. SCRIPT DE ARRANQUE (Reemplaza a systemd)
-# Este script levanta VNC, luego Websockify, y finalmente PufferPanel en background
-RUN echo '#!/bin/bash\n\
+# 4. Configurar Nginx como proxy inverso unico
+# Railway solo expone 1 puerto publico. Nginx escucha en ese puerto
+# y redirige /vnc -> websockify:6080 (VNC) y /panel -> pufferpanel:8080
+RUN echo 'server {\n\
+    listen 80;\n\
+\n\
+    # Pagina principal -> redirige al VNC\n\
+    location / {\n\
+        return 301 /vnc/vnc.html;\n\
+    }\n\
+\n\
+    # Escritorio VNC (archivos estaticos de noVNC)\n\
+    location /vnc/ {\n\
+        proxy_pass http://127.0.0.1:6080/;\n\
+        proxy_http_version 1.1;\n\
+        proxy_set_header Host $host;\n\
+    }\n\
+\n\
+    # WebSocket del VNC (CRITICO para que noVNC conecte)\n\
+    location /websockify {\n\
+        proxy_pass http://127.0.0.1:6080/websockify;\n\
+        proxy_http_version 1.1;\n\
+        proxy_set_header Upgrade $http_upgrade;\n\
+        proxy_set_header Connection "Upgrade";\n\
+        proxy_set_header Host $host;\n\
+        proxy_read_timeout 3600s;\n\
+        proxy_send_timeout 3600s;\n\
+    }\n\
+\n\
+    # Panel PufferPanel\n\
+    location /panel/ {\n\
+        proxy_pass http://127.0.0.1:8080/;\n\
+        proxy_http_version 1.1;\n\
+        proxy_set_header Upgrade $http_upgrade;\n\
+        proxy_set_header Connection "Upgrade";\n\
+        proxy_set_header Host $host;\n\
+    }\n\
+}' > /etc/nginx/sites-available/default
+
+# 5. Script de arranque
+RUN printf '#!/bin/bash\n\
 set -e\n\
 \n\
-echo "[INFO] Iniciando VNC..."\n\
+echo "[1/4] Limpiando locks VNC anteriores..."\n\
+rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock 2>/dev/null || true\n\
+\n\
+echo "[2/4] Iniciando VNC Server..."\n\
 vncserver -localhost no -SecurityTypes None -geometry 1280x720 --I-KNOW-THIS-IS-INSECURE\n\
 \n\
-echo "[INFO] Generando certificado SSL..."\n\
-openssl req -new -subj "/C=JP" -x509 -days 365 -nodes -out /self.pem -keyout /self.pem 2>/dev/null\n\
+echo "[3/4] Iniciando Websockify (sin SSL, Nginx es el proxy)..."\n\
+websockify -D --web=/usr/share/novnc/ 6080 localhost:5901\n\
 \n\
-echo "[INFO] Iniciando noVNC (Puerto 6080)..."\n\
-websockify -D --web=/usr/share/novnc/ --cert=/self.pem 6080 localhost:5901\n\
+echo "[4/4] Iniciando PufferPanel..."\n\
+PUFFER_BIN=$(which pufferpanel 2>/dev/null || echo "/usr/sbin/pufferpanel")\n\
+$PUFFER_BIN run > /var/log/pufferpanel/server.log 2>&1 &\n\
 \n\
-echo "[INFO] Iniciando PufferPanel (Puerto 8080)..."\n\
-# Ejecución manual en background\n\
-/usr/local/bin/pufferpanel run > /var/log/pufferpanel/server.log 2>&1 &\n\
-\n\
-echo "[OK] Todo listo. Logs en /var/log/pufferpanel/server.log"\n\
-tail -f /var/log/pufferpanel/server.log' > /start.sh && chmod +x /start.sh
+echo "[5/5] Iniciando Nginx (proxy publico en puerto 80)..."\n\
+nginx -g "daemon off;"\n' > /start.sh && chmod +x /start.sh
 
-# 5. Exponer Puertos
-EXPOSE 6080 8080 5657
+# 6. Solo exponemos el puerto de Nginx (Railway solo necesita 1)
+EXPOSE 80
 
-# 6. Arrancar
 CMD ["/start.sh"]
