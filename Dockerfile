@@ -20,8 +20,8 @@ RUN touch /root/.Xauthority
 
 # 3. INSTALAR PUFFERPANEL (Sin usar apt/systemd)
 # Descargamos el binario directo. Es más limpio para Docker.
-RUN wget -q https://github.com/PufferPanel/PufferPanel/releases/latest/download/pufferpanel_linux_amd64 -O /usr/local/bin/pufferpanel \
-    && chmod +x /usr/local/bin/pufferpanel
+RUN curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | sudo bash
+RUN sudo apt-get install pufferpanel
 
 # Crear carpetas necesarias
 RUN mkdir -p /etc/pufferpanel /var/lib/pufferpanel /var/log/pufferpanel
