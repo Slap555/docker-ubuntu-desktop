@@ -2,7 +2,7 @@ FROM --platform=linux/amd64 ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Instalar dependencias base + Nginx
+# 1. Instalar dependencias
 RUN apt update -y && apt install --no-install-recommends -y \
     xfce4 xfce4-goodies tigervnc-standalone-server novnc websockify \
     sudo xterm snapd vim net-tools curl wget git tzdata openssl ca-certificates nginx jq
@@ -24,7 +24,6 @@ RUN apt-get install -y pufferpanel
 RUN mkdir -p /etc/pufferpanel /var/lib/pufferpanel /var/log/pufferpanel
 
 # --- PARCHE NO-VNC Y RAILWAY ---
-# Evita el "Failed to connect" forzando el puerto WSS externo detectado por la URL.
 RUN sed -i "s/UI.initSetting('port', window.location.port);/UI.initSetting('port', window.location.port || (window.location.protocol === 'https:' ? 443 : 80));/g" /usr/share/novnc/app/ui.js
 
 # 4. Configurar Nginx proxy
@@ -54,7 +53,7 @@ RUN echo 'server {\n\
     }\n\
 }' > /etc/nginx/sites-available/default
 
-# 5. Script de arranque (Con reparacion de PufferPanel emails.json)
+# 5. Script de arranque
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
