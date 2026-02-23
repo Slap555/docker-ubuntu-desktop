@@ -17,22 +17,23 @@ RUN echo 'Package: *' >> /etc/apt/preferences.d/mozilla-firefox && \
 RUN apt update -y && apt install -y firefox xubuntu-icon-theme
 RUN touch /root/.Xauthority
 
-# 3. Instalar PufferPanel
+# 3. Instalar PufferPanel via repositorio APT
 RUN curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | bash
 RUN apt-get install -y pufferpanel
+
+# --- CORRECCION DEL ERROR DE CORREOS DE PUFFERPANEL ---
 RUN mkdir -p /etc/pufferpanel/email /var/lib/pufferpanel/email /var/log/pufferpanel
 RUN echo "{}" > /etc/pufferpanel/email/emails.json
 RUN echo "{}" > /var/lib/pufferpanel/email/emails.json
 
-# --- PARCHE NO-VNC Y CONTRASEÑA VNC ---
+# --- PARCHE NO-VNC ---
 RUN sed -i "s/UI.initSetting('port', window.location.port);/UI.initSetting('port', window.location.port || (window.location.protocol === 'https:' ? 443 : 80));/g" /usr/share/novnc/app/ui.js
-
-# Crear contraseña para el VNC (Cambia "nova2026" por tu contraseña)
-RUN mkdir -p /root/.vnc && echo "nova2026" | vncpasswd -f > /root/.vnc/passwd && chmod 600 /root/.vnc/passwd
 
 # 4. Configurar Nginx proxy
 RUN echo 'server {\n\
     listen 80;\n\
+\n\
+    # Pagina de inicio PufferPanel\n\
     location / {\n\
         proxy_pass http://127.0.0.1:8080/;\n\
         proxy_http_version 1.1;\n\
@@ -40,9 +41,13 @@ RUN echo 'server {\n\
         proxy_set_header Connection "Upgrade";\n\
         proxy_set_header Host $host;\n\
     }\n\
+\n\
+    # Ruta del Escritorio VNC\n\
     location /vnc/ {\n\
         proxy_pass http://127.0.0.1:6080/;\n\
     }\n\
+\n\
+    # WebSocket del VNC\n\
     location /websockify {\n\
         proxy_pass http://127.0.0.1:6080/websockify;\n\
         proxy_http_version 1.1;\n\
@@ -57,8 +62,7 @@ set -e\n\
 \n\
 echo "[1/4] Iniciando VNC..."\n\
 rm -rf /tmp/.X11-unix/X1 /tmp/.X1-lock 2>/dev/null || true\n\
-# IMPORTANTE: Aquí cambiamos SecurityTypes a VncAuth para pedir contraseña \n\
-vncserver -localhost no -SecurityTypes VncAuth -geometry 1280x720\n\
+vncserver -localhost no -SecurityTypes None -geometry 1280x720 --I-KNOW-THIS-IS-INSECURE\n\
 \n\
 echo "[2/4] Preparando logs y Websockify..."\n\
 mkdir -p /var/log/pufferpanel /var/log/nginx\n\
@@ -74,6 +78,7 @@ fi\n\
 chown -R root:root /etc/pufferpanel /var/lib/pufferpanel /var/log/pufferpanel\n\
 \n\
 echo "[4/4] Creando Admin..."\n\
+# IMPORTANTE: Creamos un usuario administrador por defecto para evitar problemas\n\
 cd /etc/pufferpanel\n\
 /usr/sbin/pufferpanel user add --email admin@admin.com --name admin --password admin --admin || true\n\
 \n\
@@ -85,6 +90,7 @@ $PUFFER_BIN run > /var/log/pufferpanel/server.log 2>&1 &\n\
 tail -f /var/log/pufferpanel/server.log &\n\
 nginx -g "daemon off;"\n' > /start.sh && chmod +x /start.sh
 
+# 6. Solo exponemos el puerto principal
 EXPOSE 80
 
 CMD ["/start.sh"]
